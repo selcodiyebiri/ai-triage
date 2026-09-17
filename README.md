@@ -19,6 +19,11 @@ exists (manual choice), nothing is changed.
 
 ## Install in a repository
 
+One-liner (idempotent; run again to update):
+
+
+
+
 Add `.github/workflows/auto-label.yml`:
 
 ```yaml
