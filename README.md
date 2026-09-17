@@ -12,10 +12,16 @@ opencode-pilot can route it to the right agent and model:
 | `db` | migrator | pilot-db |
 | `frontend` | frontend-ops | pilot-frontend |
 | `docs` | docs-agent | pilot-docs |
+| `chain` (additive) | chain (full CMA chain) | pilot-chain |
 | *(none)* | build (default) | pilot-default |
 
-Priority order: security > db > frontend > docs. If any routing label already
-exists (manual choice), nothing is changed.
+Priority order for domain labels: security > db > frontend > docs (one domain
+label only, respected if already present). `chain` is additive and takes
+routing precedence over every domain label: it is applied when the issue text
+contains chain phrases ("zincir", "run-chain", "tam zincir",
+"planner -> tdd-guide", ...) or when the label is set manually. The `chain`
+label makes opencode-pilot run the issue through the full Core CMA chain
+(planner -> tdd-guide -> implementation -> code-reviewer -> security-reviewer).
 
 ## Install in a repository
 

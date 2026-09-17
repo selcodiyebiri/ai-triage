@@ -1,9 +1,14 @@
 // Auto-label triage for pilot issues.
 //
 // Runs inside GitHub Actions on issues (opened/edited/labeled). If the issue
-// carries the "pilot" label and has no routing label yet, it classifies the
-// issue text and applies exactly one routing label so opencode-pilot can route
-// it to the right agent/model source.
+// carries the "pilot" label:
+//
+//   1. Domain routing: exactly one of security | db | frontend | docs is
+//      applied (priority order) when no domain label exists yet.
+//   2. Chain routing (additive): the "chain" label is applied when the issue
+//      already carries it, or when the issue text requests the chain
+//      ("zincir", "run-chain", ...). The chain label makes opencode-pilot route
+//      the issue to the `chain` agent and excludes all other sources.
 //
 // Environment (set by the caller workflow):
 //   GH_TOKEN        - token with issues:write
@@ -13,17 +18,19 @@
 //   ISSUE_BODY      - issue body
 //   ISSUE_LABELS    - comma-separated current labels
 
+import { pathToFileURL } from "node:url";
+
 const token = process.env.GH_TOKEN;
 const repo = process.env.REPO;
 const number = process.env.ISSUE_NUMBER;
-const title = (process.env.ISSUE_TITLE || "").toLowerCase();
-const body = (process.env.ISSUE_BODY || "").toLowerCase();
+const title = process.env.ISSUE_TITLE || "";
+const body = process.env.ISSUE_BODY || "";
 const labels = (process.env.ISSUE_LABELS || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
 
-const ROUTES = [
+const DOMAIN_ROUTES = [
   {
     label: "security",
     color: "B60205",
@@ -61,6 +68,31 @@ const ROUTES = [
   },
 ];
 
+const CHAIN_ROUTE = {
+  label: "chain",
+  color: "6F42C1",
+  keywords: [
+    "zincir",
+    "run-chain",
+    "run chain",
+    "tam zincir",
+    "tüm zincir",
+    "planner -> tdd-guide",
+    "planner->tdd-guide",
+    "planner → tdd-guide",
+  ],
+};
+
+export function decide(titleText, bodyText, currentLabels) {
+  const text = `${titleText}\n${bodyText}`.toLowerCase();
+  const domain =
+    DOMAIN_ROUTES.find((r) => r.keywords.some((k) => text.includes(k)))?.label ??
+    null;
+  const chainByLabel = currentLabels.includes("chain");
+  const chainByText = CHAIN_ROUTE.keywords.some((k) => text.includes(k));
+  return { domain, chain: chainByLabel || chainByText, chainByLabel };
+}
+
 async function api(path, init = {}) {
   const res = await fetch(`https://api.github.com${path}`, {
     ...init,
@@ -74,47 +106,73 @@ async function api(path, init = {}) {
   return res;
 }
 
-function finish(msg) {
-  console.log(msg);
-  process.exit(0);
-}
-
-if (!labels.includes("pilot")) finish("no pilot label; skipping");
-if (!repo || !number) finish("missing REPO or ISSUE_NUMBER; skipping");
-
-const routeLabels = ROUTES.map((r) => r.label);
-const existing = routeLabels.filter((l) => labels.includes(l));
-if (existing.length) finish(`routing label already present: ${existing.join(",")}`);
-
-const text = `${title}\n${body}`;
-let matched = null;
-for (const route of ROUTES) {
-  if (route.keywords.some((k) => text.includes(k))) {
-    matched = route;
-    break;
+async function ensureLabel(label, color) {
+  const res = await api(`/repos/${repo}/labels`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: label,
+      color,
+      description: "opencode-pilot routing label",
+    }),
+  });
+  if (!res.ok && res.status !== 422) {
+    throw new Error(`failed to ensure label ${label}: ${res.status}`);
   }
 }
-if (!matched) finish("no route matched; leaving issue for the default source");
 
-const ensure = await api(`/repos/${repo}/labels`, {
-  method: "POST",
-  body: JSON.stringify({
-    name: matched.label,
-    color: matched.color,
-    description: "opencode-pilot routing label",
-  }),
-});
-if (!ensure.ok && ensure.status !== 422) {
-  console.error(`failed to ensure label ${matched.label}: ${ensure.status}`);
-  process.exit(1);
+async function addLabel(label) {
+  const res = await api(`/repos/${repo}/issues/${number}/labels`, {
+    method: "POST",
+    body: JSON.stringify({ labels: [label] }),
+  });
+  if (!res.ok) {
+    throw new Error(`failed to add label ${label}: ${res.status}`);
+  }
 }
 
-const add = await api(`/repos/${repo}/issues/${number}/labels`, {
-  method: "POST",
-  body: JSON.stringify({ labels: [matched.label] }),
-});
-if (!add.ok) {
-  console.error(`failed to add label ${matched.label}: ${add.status}`);
-  process.exit(1);
+async function main() {
+  if (!labels.includes("pilot")) {
+    console.log("no pilot label; skipping");
+    return;
+  }
+  if (!repo || !number) {
+    console.log("missing REPO or ISSUE_NUMBER; skipping");
+    return;
+  }
+
+  const verdict = decide(title, body, labels);
+  const existingDomain = DOMAIN_ROUTES.map((r) => r.label).filter((l) =>
+    labels.includes(l),
+  );
+  const applied = [];
+
+  if (!existingDomain.length && verdict.domain) {
+    const route = DOMAIN_ROUTES.find((r) => r.label === verdict.domain);
+    await ensureLabel(route.label, route.color);
+    await addLabel(route.label);
+    applied.push(route.label);
+  } else if (existingDomain.length) {
+    console.log(`domain label already present: ${existingDomain.join(",")}`);
+  }
+
+  if (verdict.chain && !verdict.chainByLabel) {
+    await ensureLabel(CHAIN_ROUTE.label, CHAIN_ROUTE.color);
+    await addLabel(CHAIN_ROUTE.label);
+    applied.push(CHAIN_ROUTE.label);
+  }
+
+  console.log(
+    applied.length ? `applied: ${applied.join(",")}` : "no label applied",
+  );
 }
-finish(`applied routing label: ${matched.label}`);
+
+const isMain =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isMain) {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  });
+}
