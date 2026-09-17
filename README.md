@@ -21,10 +21,11 @@ exists (manual choice), nothing is changed.
 
 One-liner (idempotent; run again to update):
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/selcodiyebiri/ai-triage/main/install.sh | bash -s -- owner/repo
+```
 
-
-
-Add `.github/workflows/auto-label.yml`:
+Or add `.github/workflows/auto-label.yml` manually:
 
 ```yaml
 name: auto-label
@@ -54,3 +55,9 @@ jobs:
 
 No secrets are required per repository; the workflow uses the repo's own
 `GITHUB_TOKEN`.
+
+## Keywords
+
+Edit `label.mjs` in this repository to change the keyword lists or priority;
+every repository picks up the change on its next run (the caller checks out this
+repository on each execution).
