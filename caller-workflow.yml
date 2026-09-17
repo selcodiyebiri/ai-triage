@@ -1,0 +1,23 @@
+name: auto-label
+on:
+  issues:
+    types: [opened, edited, labeled]
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: selcodiyebiri/ai-triage
+          path: ai-triage
+      - run: node ai-triage/label.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
